@@ -96,6 +96,9 @@ class DesktopReader(tk.Tk):
         self.current_page = 1
         self.zoom = 1.0
         self.tk_image: ImageTk.PhotoImage | None = None
+        self.left_panel_visible = True
+        self.left_panel: ttk.Frame | None = None
+        self.toggle_left_btn: ttk.Button | None = None
 
         self._build_ui()
         self.refresh_library()
@@ -110,21 +113,21 @@ class DesktopReader(tk.Tk):
         root = ttk.Frame(self)
         root.pack(fill=tk.BOTH, expand=True)
 
-        left = ttk.Frame(root, width=340)
-        left.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
-        left.pack_propagate(False)
+        self.left_panel = ttk.Frame(root, width=340)
+        self.left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+        self.left_panel.pack_propagate(False)
 
         center = ttk.Frame(root)
         center.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10), pady=10)
 
-        ttk.Label(left, text="Biblioteca", font=("Segoe UI", 13, "bold")).pack(anchor="w")
-        top_actions = ttk.Frame(left)
+        ttk.Label(self.left_panel, text="Biblioteca", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        top_actions = ttk.Frame(self.left_panel)
         top_actions.pack(fill=tk.X, pady=(8, 8))
         ttk.Button(top_actions, text="Importar PDF", command=self.import_pdf).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(top_actions, text="Excluir", command=self.delete_selected_book).pack(side=tk.LEFT, padx=(6, 0))
 
         cols = ("title", "progress")
-        self.library_tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
+        self.library_tree = ttk.Treeview(self.left_panel, columns=cols, show="headings", selectmode="browse")
         self.library_tree.heading("title", text="Livro")
         self.library_tree.heading("progress", text="Progresso")
         self.library_tree.column("title", width=220)
@@ -132,11 +135,13 @@ class DesktopReader(tk.Tk):
         self.library_tree.pack(fill=tk.BOTH, expand=True)
         self.library_tree.bind("<<TreeviewSelect>>", self.on_select_book)
 
-        self.bookmark_label = ttk.Label(left, text="Bookmarks: -")
+        self.bookmark_label = ttk.Label(self.left_panel, text="Bookmarks: -")
         self.bookmark_label.pack(anchor="w", pady=(8, 0))
 
         controls = ttk.Frame(center)
         controls.pack(fill=tk.X)
+        self.toggle_left_btn = ttk.Button(controls, text="Ocultar biblioteca", command=self.toggle_left_panel)
+        self.toggle_left_btn.pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(controls, text="Anterior", command=lambda: self.go_page(self.current_page - 1)).pack(side=tk.LEFT)
         ttk.Button(controls, text="Próxima", command=lambda: self.go_page(self.current_page + 1)).pack(side=tk.LEFT, padx=(6, 0))
         self.page_label = ttk.Label(controls, text="Página - / -")
@@ -151,6 +156,19 @@ class DesktopReader(tk.Tk):
         self.reader_canvas = tk.Canvas(canvas_wrap, bg="#0b0e17", highlightthickness=0)
         self.reader_canvas.pack(fill=tk.BOTH, expand=True)
         self.reader_canvas.bind("<Configure>", lambda _e: self.render_current_page())
+
+    def toggle_left_panel(self) -> None:
+        if not self.left_panel:
+            return
+        self.left_panel_visible = not self.left_panel_visible
+        if self.left_panel_visible:
+            self.left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+            if self.toggle_left_btn:
+                self.toggle_left_btn.configure(text="Ocultar biblioteca")
+        else:
+            self.left_panel.pack_forget()
+            if self.toggle_left_btn:
+                self.toggle_left_btn.configure(text="Mostrar biblioteca")
 
     def refresh_library(self) -> None:
         self.books = query_all(
