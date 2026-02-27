@@ -16,16 +16,16 @@ jobs:
       - name: Deploy through SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 192.168.100.49
-          username: rafaelkrueger
+          host: ${{ secrets.PI_HOST }}
+          username: ${{ secrets.PI_USER }}
           key: ${{ secrets.PI_SSH_KEY }}
-          port: "22"
+          port: ${{ secrets.PI_PORT || '22' }}
           script_stop: true
           envs: PI_APP_DIR,PI_SERVICE_NAME
           script: |
             set -euo pipefail
 
-            APP_DIR="${PI_APP_DIR:-/home/rafaelkrueger/personal-kindle}"
+            APP_DIR="${PI_APP_DIR:-/home/${{ secrets.PI_USER }}/personal-kindle}"
             SERVICE_NAME="${PI_SERVICE_NAME:-personal-kindle}"
 
             echo "Deploying in: ${APP_DIR}"
