@@ -31,6 +31,7 @@ pip install -r requirements.txt
 python3 app.py
 ```
 
+
 Abra no navegador:
 - no proprio Raspberry: `http://localhost:5000`
 - em outro dispositivo da rede: `http://IP_DO_RASPBERRY:5000`
