@@ -1,0 +1,43 @@
+name: Deploy to Raspberry Pi
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PI_APP_DIR: ${{ vars.PI_APP_DIR }}
+      PI_SERVICE_NAME: ${{ vars.PI_SERVICE_NAME }}
+    steps:
+      - name: Deploy through SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PI_HOST }}
+          username: ${{ secrets.PI_USER }}
+          key: ${{ secrets.PI_SSH_KEY }}
+          port: ${{ secrets.PI_PORT || '22' }}
+          script_stop: true
+          envs: PI_APP_DIR,PI_SERVICE_NAME
+          script: |
+            set -euo pipefail
+
+            APP_DIR="${PI_APP_DIR:-/home/${{ secrets.PI_USER }}/personal-kindle}"
+            SERVICE_NAME="${PI_SERVICE_NAME:-personal-kindle}"
+
+            echo "Deploying in: ${APP_DIR}"
+            cd "${APP_DIR}"
+
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+
+            source .venv/bin/activate
+            pip install -r requirements.txt
+
+            sudo systemctl restart "${SERVICE_NAME}"
+            sudo systemctl is-active --quiet "${SERVICE_NAME}"
+            sudo systemctl --no-pager --lines=20 status "${SERVICE_NAME}"
