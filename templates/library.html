@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% set title = "Biblioteca | MiniKindle" %}
+{% block content %}
+<header class="library-hero card">
+  <div class="hero-left">
+    <span class="hero-badge">Leitor PDF pessoal</span>
+    <h1>MiniKindle</h1>
+    <p>Sua biblioteca elegante para estudar e ler com conforto em qualquer tela.</p>
+    <div class="hero-tags">
+      <span>Leve no Raspberry Pi</span>
+      <span>Progresso automatico</span>
+      <span>Bookmarks e grifos</span>
+    </div>
+  </div>
+  <div class="hero-stats">
+    <div class="stats card">
+      <strong>{{ books|length }}</strong>
+      <span>livros</span>
+    </div>
+  </div>
+</header>
+
+<section class="card uploader library-uploader" id="dropzone">
+  <div class="upload-icon" aria-hidden="true">PDF</div>
+  <form action="/upload" method="post" enctype="multipart/form-data" id="uploadForm">
+    <input type="file" name="pdf" id="pdfInput" accept="application/pdf" required />
+    <label for="pdfInput">Arraste um PDF aqui ou clique para escolher</label>
+    <p>Formatos suportados: .pdf</p>
+    <button type="submit">Adicionar a biblioteca</button>
+  </form>
+</section>
+
+<section class="books-header">
+  <h2>Minha biblioteca</h2>
+  <span>{{ books|length }} item(ns)</span>
+</section>
+
+<section class="books-grid">
+  {% if books %}
+    {% for book in books %}
+      <article class="card book-card">
+        <div class="book-cover">{{ book["title"][0:2].upper() }}</div>
+        <div class="book-meta">
+          <h3 title="{{ book['title'] }}">{{ book["title"] }}</h3>
+          <p>{{ book["total_pages"] if book["total_pages"] else "?" }} paginas</p>
+          <p>Parou em: pagina {{ book["last_page"] }}</p>
+          {% if book["total_pages"] and book["total_pages"] > 0 %}
+            {% set percent = ((book["last_page"] / book["total_pages"]) * 100) | round(0, 'floor') %}
+          {% else %}
+            {% set percent = 0 %}
+          {% endif %}
+          <div class="progress-wrap">
+            <div class="progress-track">
+              <div class="progress-fill" style="width: {{ percent }}%;"></div>
+            </div>
+            <small>{{ percent }}% lido</small>
+          </div>
+          <div class="book-actions">
+            <a class="btn" href="/book/{{ book['id'] }}">Ler agora</a>
+            <button class="btn danger delete-book-btn" data-book-id="{{ book['id'] }}" data-book-title="{{ book['title'] }}" type="button">Excluir</button>
+          </div>
+        </div>
+      </article>
+    {% endfor %}
+  {% else %}
+    <div class="card empty">Nenhum livro ainda. Envie seu primeiro PDF.</div>
+  {% endif %}
+</section>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="{{ url_for('static', filename='js/library.js') }}"></script>
+{% endblock %}

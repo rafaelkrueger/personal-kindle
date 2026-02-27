@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% set title = book["title"] ~ " | MiniKindle" %}
+{% block content %}
+<header class="reader-topbar card">
+  <a class="btn ghost" href="/">Biblioteca</a>
+  <div class="reader-title">{{ book["title"] }}</div>
+  <div class="reader-controls">
+    <button id="prevPage" class="btn ghost">Anterior</button>
+    <span id="pageInfo">Pagina {{ book["last_page"] }}</span>
+    <button id="nextPage" class="btn ghost">Proxima</button>
+    <button id="zoomOutBtn" class="btn ghost" title="Diminuir zoom">A-</button>
+    <span id="zoomInfo">100%</span>
+    <button id="zoomInBtn" class="btn ghost" title="Aumentar zoom">A+</button>
+    <button id="fullscreenBtn" class="btn ghost" title="Tela cheia">Tela cheia</button>
+    <button id="bookmarkBtn" class="btn">Marcar pagina</button>
+    <button id="toggleSidePanel" class="btn ghost icon-btn" type="button" aria-label="Ocultar painel" title="Ocultar painel">
+      <span aria-hidden="true">›</span>
+    </button>
+  </div>
+</header>
+
+<section class="reader-layout">
+  <article class="card pdf-card">
+    <div id="pdfWrapper">
+      <canvas id="pdfCanvas"></canvas>
+      <div id="textLayer" class="textLayer"></div>
+    </div>
+    <div class="highlight-actions">
+      <button id="highlightBtn" class="btn">Grifar selecao</button>
+    </div>
+  </article>
+
+  <aside class="card side-panel">
+    <details id="bookmarksSection" class="panel-section">
+      <summary>
+        <span>Paginas marcadas</span>
+        <span id="bookmarksCount" class="count-badge">{{ bookmarks|length }}</span>
+      </summary>
+      <div id="bookmarks" class="chip-list">
+        {% for page in bookmarks %}
+          <button class="chip" data-page="{{ page }}">Pagina {{ page }}</button>
+        {% endfor %}
+      </div>
+    </details>
+
+    <details id="highlightsSection" class="panel-section">
+      <summary>
+        <span>Grifos</span>
+        <span id="highlightsCount" class="count-badge">{{ highlights|length }}</span>
+      </summary>
+      <div id="highlights" class="highlights-list">
+        {% for h in highlights %}
+          <article class="highlight-item" data-color="{{ h['color'] }}">
+            <small>Pagina {{ h["page"] }}</small>
+            <p>{{ h["text"] }}</p>
+          </article>
+        {% endfor %}
+      </div>
+    </details>
+  </aside>
+</section>
+
+<script id="readerConfig" type="application/json">{{ {
+  "bookId": book["id"],
+  "pdfUrl": url_for("serve_pdf", filename=book["filename"]),
+  "initialPage": book["last_page"],
+  "initialBookmarks": bookmarks
+} | tojson }}</script>
+<script src="{{ url_for('static', filename='js/reader.js') }}" type="module"></script>
+{% endblock %}
