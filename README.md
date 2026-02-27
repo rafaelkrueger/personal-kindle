@@ -55,6 +55,18 @@ python3 desktop_app.py
 - marcar/desmarcar bookmarks por pagina
 - zoom de leitura (A- / A+ / 100%)
 
+### Inicio inteligente (recomendado no Raspberry Pi)
+
+Use este comando unico:
+
+```bash
+python3 start_kindle.py
+```
+
+Comportamento:
+- se houver sessao grafica (`DISPLAY`), abre o app desktop;
+- se estiver em SSH/headless, inicia automaticamente o modo web (`:5000`).
+
 ## Primeiro uso
 
 1. Acesse a tela inicial.

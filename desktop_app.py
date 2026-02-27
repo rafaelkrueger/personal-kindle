@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import shutil
 import sqlite3
 import tkinter as tk
@@ -355,8 +356,28 @@ class DesktopReader(tk.Tk):
 
 def main() -> None:
     init_db()
-    app = DesktopReader()
-    app.mainloop()
+    # Tkinter exige sessao grafica ativa no Linux.
+    if os.name != "nt" and not os.getenv("DISPLAY"):
+        host = os.getenv("HOST", "0.0.0.0")
+        port = int(os.getenv("PORT", "5000"))
+        print("Sem DISPLAY detectado. Iniciando modo web automaticamente.")
+        print(f"Acesse: http://127.0.0.1:{port} ou http://IP_DO_RASPBERRY:{port}")
+        from app import app as web_app
+
+        web_app.run(host=host, port=port, debug=False)
+        return
+
+    try:
+        app = DesktopReader()
+        app.mainloop()
+    except tk.TclError:
+        host = os.getenv("HOST", "0.0.0.0")
+        port = int(os.getenv("PORT", "5000"))
+        print("Falha ao abrir interface grafica. Iniciando modo web automaticamente.")
+        print(f"Acesse: http://127.0.0.1:{port} ou http://IP_DO_RASPBERRY:{port}")
+        from app import app as web_app
+
+        web_app.run(host=host, port=port, debug=False)
 
 
 if __name__ == "__main__":
