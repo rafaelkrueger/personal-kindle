@@ -4,10 +4,11 @@ import datetime as dt
 import os
 import shutil
 import sqlite3
+import threading
 import tkinter as tk
 import uuid
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import fitz  # PyMuPDF
 from PIL import Image, ImageTk
@@ -86,9 +87,9 @@ class DesktopReader(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("MiniKindle Desktop")
-        self.geometry("1320x820")
-        self.configure(bg="#10131d")
-        self.minsize(1020, 640)
+        self.geometry("1440x880")
+        self.configure(bg="#0f1420")
+        self.minsize(1160, 700)
 
         self.books: list[sqlite3.Row] = []
         self.current_book: sqlite3.Row | None = None
@@ -99,6 +100,14 @@ class DesktopReader(tk.Tk):
         self.left_panel_visible = True
         self.left_panel: ttk.Frame | None = None
         self.toggle_left_btn: ttk.Button | None = None
+        self.render_scale = 1.0
+        self.render_offset_x = 0
+        self.render_offset_y = 0
+        self.selection_start: tuple[int, int] | None = None
+        self.selection_rect_id: int | None = None
+        self.selected_text = ""
+        self.current_highlights: list[sqlite3.Row] = []
+        self.ai_busy = False
 
         self._build_ui()
         self.refresh_library()
@@ -109,6 +118,7 @@ class DesktopReader(tk.Tk):
         style.theme_use("clam")
         style.configure("Treeview", rowheight=28, fieldbackground="#1a2033", background="#1a2033", foreground="#dfe6ff")
         style.configure("Treeview.Heading", background="#263156", foreground="#eaf0ff")
+        style.configure("TButton", padding=7)
 
         root = ttk.Frame(self)
         root.pack(fill=tk.BOTH, expand=True)
@@ -135,8 +145,15 @@ class DesktopReader(tk.Tk):
         self.library_tree.pack(fill=tk.BOTH, expand=True)
         self.library_tree.bind("<<TreeviewSelect>>", self.on_select_book)
 
-        self.bookmark_label = ttk.Label(self.left_panel, text="Bookmarks: -")
-        self.bookmark_label.pack(anchor="w", pady=(8, 0))
+        ttk.Label(self.left_panel, text="Bookmarks").pack(anchor="w", pady=(8, 3))
+        self.bookmarks_list = tk.Listbox(self.left_panel, height=7, bg="#121932", fg="#dfe6ff", selectbackground="#2f5cff")
+        self.bookmarks_list.pack(fill=tk.X)
+        self.bookmarks_list.bind("<<ListboxSelect>>", self.on_select_bookmark)
+
+        ttk.Label(self.left_panel, text="Grifos").pack(anchor="w", pady=(8, 3))
+        self.highlights_list = tk.Listbox(self.left_panel, height=8, bg="#121932", fg="#dfe6ff", selectbackground="#2f5cff")
+        self.highlights_list.pack(fill=tk.BOTH, expand=False)
+        self.highlights_list.bind("<<ListboxSelect>>", self.on_select_highlight)
 
         controls = ttk.Frame(center)
         controls.pack(fill=tk.X)
@@ -147,15 +164,30 @@ class DesktopReader(tk.Tk):
         self.page_label = ttk.Label(controls, text="Página - / -")
         self.page_label.pack(side=tk.LEFT, padx=10)
         ttk.Button(controls, text="Marcar página", command=self.toggle_bookmark).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(controls, text="Grifar seleção", command=self.add_highlight_from_selection).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(controls, text="Perguntar IA", command=self.ask_ai_about_selection).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(controls, text="Traduzir", command=self.translate_selection).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(controls, text="A-", command=lambda: self.set_zoom(self.zoom - 0.1)).pack(side=tk.RIGHT)
         ttk.Button(controls, text="A+", command=lambda: self.set_zoom(self.zoom + 0.1)).pack(side=tk.RIGHT, padx=(0, 6))
         ttk.Button(controls, text="100%", command=lambda: self.set_zoom(1.0)).pack(side=tk.RIGHT, padx=(0, 6))
+
+        self.selection_info = ttk.Label(center, text="Seleção: arraste o mouse sobre a página para selecionar trecho.")
+        self.selection_info.pack(fill=tk.X, pady=(6, 0))
 
         canvas_wrap = ttk.Frame(center)
         canvas_wrap.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         self.reader_canvas = tk.Canvas(canvas_wrap, bg="#0b0e17", highlightthickness=0)
         self.reader_canvas.pack(fill=tk.BOTH, expand=True)
         self.reader_canvas.bind("<Configure>", lambda _e: self.render_current_page())
+        self.reader_canvas.bind("<ButtonPress-1>", self.on_canvas_press)
+        self.reader_canvas.bind("<B1-Motion>", self.on_canvas_drag)
+        self.reader_canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+
+        ttk.Label(center, text="Resposta da IA").pack(anchor="w", pady=(8, 3))
+        self.ai_text = tk.Text(center, height=8, wrap=tk.WORD, bg="#10172c", fg="#e8edff")
+        self.ai_text.pack(fill=tk.X)
+        self.ai_text.insert("1.0", "Selecione um trecho da página e use Perguntar IA/Traduzir.")
+        self.ai_text.config(state=tk.DISABLED)
 
     def toggle_left_panel(self) -> None:
         if not self.left_panel:
@@ -254,7 +286,10 @@ class DesktopReader(tk.Tk):
         self.current_page = 1
         self.page_label.configure(text="Página - / -")
         self.reader_canvas.delete("all")
-        self.bookmark_label.configure(text="Bookmarks: -")
+        self.bookmarks_list.delete(0, tk.END)
+        self.highlights_list.delete(0, tk.END)
+        self.selected_text = ""
+        self.selection_info.configure(text="Seleção: arraste o mouse sobre a página para selecionar trecho.")
 
     def set_zoom(self, value: float) -> None:
         self.zoom = max(0.7, min(2.3, value))
@@ -281,13 +316,17 @@ class DesktopReader(tk.Tk):
         fit_scale = min(cw / base.width, ch / base.height) * self.zoom
         matrix = fitz.Matrix(fit_scale, fit_scale)
         pix = page.get_pixmap(matrix=matrix, alpha=False)
+        self.render_scale = fit_scale
 
         image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         self.tk_image = ImageTk.PhotoImage(image)
         self.reader_canvas.delete("all")
         x = (cw - pix.width) // 2
         y = (ch - pix.height) // 2
+        self.render_offset_x = max(0, x)
+        self.render_offset_y = max(0, y)
         self.reader_canvas.create_image(max(0, x), max(0, y), anchor="nw", image=self.tk_image)
+        self.draw_highlight_overlays()
 
         self.page_label.configure(text=f"Página {self.current_page} / {len(self.current_doc)}")
 
@@ -300,6 +339,8 @@ class DesktopReader(tk.Tk):
             (len(self.current_doc), self.current_book["id"]),
         )
         self.refresh_progress_cell()
+        self.update_bookmark_label()
+        self.refresh_highlight_list()
 
     def refresh_progress_cell(self) -> None:
         if not self.current_doc or not self.current_book:
@@ -350,7 +391,7 @@ class DesktopReader(tk.Tk):
 
     def update_bookmark_label(self) -> None:
         if not self.current_book:
-            self.bookmark_label.configure(text="Bookmarks: -")
+            self.bookmarks_list.delete(0, tk.END)
             return
         rows = query_all(
             """
@@ -361,11 +402,210 @@ class DesktopReader(tk.Tk):
             """,
             (self.current_book["id"],),
         )
-        pages = [str(r["page"]) for r in rows]
-        text = ", ".join(pages[:12])
-        if len(pages) > 12:
-            text += " ..."
-        self.bookmark_label.configure(text=f"Bookmarks: {text or '-'}")
+        self.bookmarks_list.delete(0, tk.END)
+        for r in rows:
+            self.bookmarks_list.insert(tk.END, f"Página {r['page']}")
+
+    def on_select_bookmark(self, _event=None) -> None:
+        if not self.current_doc:
+            return
+        idxs = self.bookmarks_list.curselection()
+        if not idxs:
+            return
+        item = self.bookmarks_list.get(idxs[0])
+        try:
+            page = int(item.replace("Página", "").strip())
+        except ValueError:
+            return
+        self.go_page(page)
+
+    def refresh_highlight_list(self) -> None:
+        if not self.current_book:
+            self.current_highlights = []
+            self.highlights_list.delete(0, tk.END)
+            return
+        self.current_highlights = query_all(
+            """
+            SELECT id, page, text, color
+            FROM highlights
+            WHERE book_id = ?
+            ORDER BY created_at DESC
+            """,
+            (self.current_book["id"],),
+        )
+        self.highlights_list.delete(0, tk.END)
+        for h in self.current_highlights:
+            label = f"P{h['page']}: {h['text'][:60]}"
+            self.highlights_list.insert(tk.END, label)
+
+    def on_select_highlight(self, _event=None) -> None:
+        idxs = self.highlights_list.curselection()
+        if not idxs or not self.current_doc:
+            return
+        h = self.current_highlights[idxs[0]]
+        self.go_page(h["page"])
+        self.selected_text = h["text"]
+        self.selection_info.configure(text=f"Seleção: {self.selected_text[:180]}")
+
+    def draw_highlight_overlays(self) -> None:
+        if not self.current_doc or not self.current_book:
+            return
+        highlights = query_all(
+            """
+            SELECT text
+            FROM highlights
+            WHERE book_id = ? AND page = ?
+            """,
+            (self.current_book["id"], self.current_page),
+        )
+        page = self.current_doc[self.current_page - 1]
+        for h in highlights:
+            text = (h["text"] or "").strip()
+            if not text:
+                continue
+            for rect in page.search_for(text, quads=False):
+                x0 = int(rect.x0 * self.render_scale + self.render_offset_x)
+                y0 = int(rect.y0 * self.render_scale + self.render_offset_y)
+                x1 = int(rect.x1 * self.render_scale + self.render_offset_x)
+                y1 = int(rect.y1 * self.render_scale + self.render_offset_y)
+                self.reader_canvas.create_rectangle(
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    outline="#ffdc42",
+                    fill="#ffdc42",
+                    stipple="gray50",
+                    width=1,
+                )
+
+    def on_canvas_press(self, event: tk.Event) -> None:
+        if not self.current_doc:
+            return
+        self.selection_start = (event.x, event.y)
+        if self.selection_rect_id:
+            self.reader_canvas.delete(self.selection_rect_id)
+            self.selection_rect_id = None
+
+    def on_canvas_drag(self, event: tk.Event) -> None:
+        if not self.selection_start:
+            return
+        x0, y0 = self.selection_start
+        x1, y1 = event.x, event.y
+        if self.selection_rect_id:
+            self.reader_canvas.coords(self.selection_rect_id, x0, y0, x1, y1)
+        else:
+            self.selection_rect_id = self.reader_canvas.create_rectangle(
+                x0,
+                y0,
+                x1,
+                y1,
+                outline="#63c7ff",
+                width=2,
+                dash=(5, 2),
+            )
+
+    def on_canvas_release(self, event: tk.Event) -> None:
+        if not self.current_doc or not self.selection_start:
+            return
+        x0, y0 = self.selection_start
+        x1, y1 = event.x, event.y
+        self.selection_start = None
+
+        left = min(x0, x1)
+        top = min(y0, y1)
+        right = max(x0, x1)
+        bottom = max(y0, y1)
+        if right - left < 10 or bottom - top < 10:
+            return
+
+        page_rect = fitz.Rect(
+            (left - self.render_offset_x) / self.render_scale,
+            (top - self.render_offset_y) / self.render_scale,
+            (right - self.render_offset_x) / self.render_scale,
+            (bottom - self.render_offset_y) / self.render_scale,
+        )
+        page = self.current_doc[self.current_page - 1]
+        words = page.get_text("words")
+        selected = []
+        for w in words:
+            w_rect = fitz.Rect(w[0], w[1], w[2], w[3])
+            if w_rect.intersects(page_rect):
+                selected.append(w)
+        selected.sort(key=lambda item: (item[5], item[6], item[7]))
+        text = " ".join(w[4] for w in selected).strip()
+        self.selected_text = text
+        if text:
+            self.selection_info.configure(text=f"Seleção: {text[:220]}")
+        else:
+            self.selection_info.configure(text="Nenhum texto detectado nessa seleção.")
+
+    def add_highlight_from_selection(self) -> None:
+        if not self.current_book:
+            return
+        text = (self.selected_text or "").strip()
+        if not text:
+            messagebox.showinfo("Grifar", "Selecione um trecho na página primeiro.")
+            return
+        execute(
+            """
+            INSERT INTO highlights (book_id, page, text, color, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (self.current_book["id"], self.current_page, text[:1200], "#ffe066", dt.datetime.utcnow().isoformat(timespec="seconds")),
+        )
+        self.refresh_highlight_list()
+        self.render_current_page()
+
+    def _set_ai_text(self, text: str) -> None:
+        self.ai_text.config(state=tk.NORMAL)
+        self.ai_text.delete("1.0", tk.END)
+        self.ai_text.insert("1.0", text)
+        self.ai_text.config(state=tk.DISABLED)
+
+    def _run_ai(self, question: str) -> None:
+        from app import call_openai
+
+        system_prompt = (
+            "Voce e um assistente de leitura de livros em PDF. "
+            "Responda de forma clara, objetiva e em portugues do Brasil."
+        )
+        parts = [
+            {
+                "type": "input_text",
+                "text": f"Pagina atual: {self.current_page}\n\nTrecho selecionado:\n{self.selected_text}\n\nPergunta:\n{question}",
+            }
+        ]
+        answer = call_openai(system_prompt, parts)
+        self.after(0, lambda: self._set_ai_text(answer))
+        self.after(0, lambda: setattr(self, "ai_busy", False))
+
+    def ask_ai_about_selection(self) -> None:
+        if self.ai_busy:
+            return
+        if not self.selected_text.strip():
+            messagebox.showinfo("IA", "Selecione um trecho para perguntar para a IA.")
+            return
+        prompt = simpledialog.askstring("Perguntar IA", "O que voce quer perguntar?")
+        if not prompt:
+            return
+        self.ai_busy = True
+        self._set_ai_text("Pensando...")
+        threading.Thread(target=self._run_ai, args=(prompt,), daemon=True).start()
+
+    def translate_selection(self) -> None:
+        if self.ai_busy:
+            return
+        if not self.selected_text.strip():
+            messagebox.showinfo("Traduzir", "Selecione um trecho para traduzir.")
+            return
+        self.ai_busy = True
+        self._set_ai_text("Traduzindo...")
+        threading.Thread(
+            target=self._run_ai,
+            args=("Traduza para portugues do Brasil mantendo o sentido original.",),
+            daemon=True,
+        ).start()
 
     def on_close(self) -> None:
         self.save_progress()
