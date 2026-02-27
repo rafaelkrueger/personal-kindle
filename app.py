@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import sqlite3
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -183,6 +186,58 @@ def create_app() -> Flask:
         )
         return jsonify({"ok": True})
 
+    @app.route("/api/book/<int:book_id>/ask-ai", methods=["POST"])
+    def ask_ai(book_id: int):
+        _ = book_id  # Mantido para facilitar futuras regras por livro.
+        data = request.get_json(silent=True) or {}
+        question = (data.get("question") or "").strip()
+        selection_text = (data.get("selectionText") or "").strip()
+        image_data_url = (data.get("imageDataUrl") or "").strip()
+        page = safe_int(data.get("page"), 1)
+
+        if not question and not selection_text and not image_data_url:
+            return jsonify({"error": "Pergunta ou selecao vazia."}), 400
+
+        system_prompt = (
+            "Voce e um assistente de leitura de livros em PDF. "
+            "Responda de forma clara, objetiva e em portugues do Brasil. "
+            "Se o usuario pedir traducao, traduza mantendo sentido e contexto. "
+            "Se houver imagem, descreva e responda com base no que esta visivel."
+        )
+
+        user_parts: list[dict] = []
+        context_text = []
+        if page > 0:
+            context_text.append(f"Pagina atual: {page}")
+        if selection_text:
+            context_text.append(f"Trecho selecionado:\n{selection_text}")
+        if question:
+            context_text.append(f"Pergunta do usuario:\n{question}")
+        else:
+            context_text.append("Explique o conteudo selecionado.")
+
+        user_parts.append(
+            {
+                "type": "input_text",
+                "text": "\n\n".join(context_text),
+            }
+        )
+
+        if image_data_url:
+            user_parts.append(
+                {
+                    "type": "input_image",
+                    "image_url": image_data_url,
+                }
+            )
+
+        try:
+            answer = call_openai(system_prompt, user_parts)
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 500
+
+        return jsonify({"ok": True, "answer": answer})
+
     return app
 
 
@@ -220,6 +275,52 @@ def safe_int(value: object, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def call_openai(system_prompt: str, user_parts: list[dict]) -> str:
+    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPEN_AI_KEY")
+    project_id = os.getenv("OPENAI_PROJECT_ID") or os.getenv("OPEN_AI_PROJECT_ID")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY nao configurada no servidor.")
+
+    payload = {
+        "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        "input": [
+            {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+            {"role": "user", "content": user_parts},
+        ],
+    }
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            **({"OpenAI-Project": project_id} if project_id else {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            body = response.read().decode("utf-8")
+            data = json.loads(body)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"Falha na IA ({exc.code}). {detail[:240]}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("Falha ao conectar no servico de IA.") from exc
+
+    if data.get("output_text"):
+        return str(data["output_text"]).strip()
+
+    output = data.get("output") or []
+    for item in output:
+        for content in item.get("content") or []:
+            text = content.get("text")
+            if text:
+                return str(text).strip()
+    raise RuntimeError("IA nao retornou resposta.")
 
 
 def init_db() -> None:

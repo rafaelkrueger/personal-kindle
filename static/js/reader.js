@@ -18,6 +18,7 @@ const zoomOutBtn = document.getElementById("zoomOutBtn");
 const zoomInBtn = document.getElementById("zoomInBtn");
 const zoomResetBtn = document.getElementById("zoomResetBtn");
 const fullscreenBtn = document.getElementById("fullscreenBtn");
+const imageAiModeBtn = document.getElementById("imageAiModeBtn");
 const zoomInfo = document.getElementById("zoomInfo");
 const bookmarksWrap = document.getElementById("bookmarks");
 const bookmarksSection = document.getElementById("bookmarksSection");
@@ -28,6 +29,18 @@ const highlightsSection = document.getElementById("highlightsSection");
 const highlightsCount = document.getElementById("highlightsCount");
 const highlightColor = document.getElementById("highlightColor");
 const sidePanel = document.querySelector(".side-panel");
+const aiSelectionMenu = document.getElementById("aiSelectionMenu");
+const aiAskBtn = document.getElementById("aiAskBtn");
+const aiTranslateBtn = document.getElementById("aiTranslateBtn");
+const aiSpeakBtn = document.getElementById("aiSpeakBtn");
+const aiResponseBox = document.getElementById("aiResponseBox");
+const aiResponseContent = document.getElementById("aiResponseContent");
+const aiCloseResponseBtn = document.getElementById("aiCloseResponseBtn");
+const imageSelectionBox = document.getElementById("imageSelectionBox");
+const ttsControls = document.getElementById("ttsControls");
+const ttsStatus = document.getElementById("ttsStatus");
+const ttsPauseResumeBtn = document.getElementById("ttsPauseResumeBtn");
+const ttsStopBtn = document.getElementById("ttsStopBtn");
 
 const progressKey = `mk_progress_${bookId}`;
 const localSavedPage = Number.parseInt(localStorage.getItem(progressKey) || "0", 10) || 0;
@@ -44,6 +57,11 @@ let progressPending = false;
 let zoomLevel = Number.parseFloat(localStorage.getItem("mk_zoom_level") || "1") || 1;
 let sidePanelCollapsed = localStorage.getItem("mk_sidepanel_collapsed") === "true";
 let sidePanelBeforeFullscreen = sidePanelCollapsed;
+let selectedText = "";
+let selectedImageDataUrl = "";
+let imageAiMode = false;
+let imageDragStart = null;
+let currentUtterance = null;
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.mjs";
@@ -194,6 +212,193 @@ function sendProgressBeacon() {
   navigator.sendBeacon(`/api/book/${bookId}/progress`, body);
 }
 
+function hideAiMenu() {
+  if (!aiSelectionMenu) return;
+  aiSelectionMenu.classList.remove("show");
+  aiSelectionMenu.setAttribute("aria-hidden", "true");
+}
+
+function showAiMenu(x, y) {
+  if (!aiSelectionMenu) return;
+  aiSelectionMenu.style.left = `${x}px`;
+  aiSelectionMenu.style.top = `${y}px`;
+  aiSelectionMenu.classList.add("show");
+  aiSelectionMenu.setAttribute("aria-hidden", "false");
+}
+
+function showAiResponse(text) {
+  if (!aiResponseBox || !aiResponseContent) return;
+  aiResponseContent.textContent = text;
+  aiResponseBox.classList.add("show");
+}
+
+function updateTtsStatus(text) {
+  if (ttsStatus) ttsStatus.textContent = text;
+}
+
+function detectLanguageForTts(text) {
+  const normalized = (text || "").toLowerCase();
+  if (!normalized) return "pt-BR";
+  if (/[а-яё]/i.test(normalized)) return "ru-RU";
+  if (/[\u4e00-\u9fff]/.test(normalized)) return "zh-CN";
+  if (/[\u3040-\u30ff]/.test(normalized)) return "ja-JP";
+  if (/[\u0600-\u06ff]/.test(normalized)) return "ar-SA";
+
+  const score = { "pt-BR": 0, "en-US": 0, "es-ES": 0, "fr-FR": 0, "de-DE": 0, "it-IT": 0 };
+  const words = normalized.split(/[^a-zà-ÿ]+/).filter(Boolean);
+  const stopwords = {
+    "pt-BR": ["de", "que", "não", "para", "com", "uma", "você", "isso", "por", "como", "livro"],
+    "en-US": ["the", "and", "for", "with", "that", "this", "from", "you", "what", "about"],
+    "es-ES": ["que", "para", "con", "una", "como", "pero", "esta", "esto", "por", "del"],
+    "fr-FR": ["que", "pour", "avec", "une", "dans", "est", "pas", "vous", "comme", "des"],
+    "de-DE": ["und", "mit", "eine", "nicht", "ist", "das", "wie", "von", "der", "die"],
+    "it-IT": ["che", "con", "una", "per", "non", "come", "del", "della", "questo", "sono"],
+  };
+  for (const w of words) {
+    Object.entries(stopwords).forEach(([lang, list]) => {
+      if (list.includes(w)) score[lang] += 1;
+    });
+  }
+  const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
+  return best && best[1] > 0 ? best[0] : "pt-BR";
+}
+
+function pickVoiceForLang(lang) {
+  const voices = window.speechSynthesis?.getVoices?.() || [];
+  if (!voices.length) return null;
+  const normalized = lang.toLowerCase();
+  return (
+    voices.find((v) => v.lang?.toLowerCase() === normalized) ||
+    voices.find((v) => v.lang?.toLowerCase().startsWith(normalized.split("-")[0])) ||
+    voices.find((v) => v.lang?.toLowerCase().startsWith("pt")) ||
+    voices[0]
+  );
+}
+
+function stopSpeech() {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  currentUtterance = null;
+  ttsControls?.classList.remove("show");
+  updateTtsStatus("Leitura: pronta");
+}
+
+function speakSelectedText() {
+  if (selectedImageDataUrl && !selectedText) {
+    showAiResponse("Para leitura em voz alta, selecione um texto. A selecao de imagem nao gera fala.");
+    return;
+  }
+  const text = (selectedText || "").trim();
+  if (!text) {
+    showAiResponse("Selecione um texto primeiro para ler em voz alta.");
+    return;
+  }
+  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
+    showAiResponse("Seu navegador nao suporta leitura em voz alta (Speech Synthesis).");
+    return;
+  }
+
+  const lang = detectLanguageForTts(text);
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = lang;
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  const voice = pickVoiceForLang(lang);
+  if (voice) utterance.voice = voice;
+
+  utterance.onstart = () => {
+    ttsControls?.classList.add("show");
+    if (ttsPauseResumeBtn) ttsPauseResumeBtn.textContent = "Pausar";
+    updateTtsStatus(`Lendo (${lang})...`);
+  };
+  utterance.onend = () => {
+    ttsControls?.classList.remove("show");
+    updateTtsStatus("Leitura: concluida");
+    currentUtterance = null;
+  };
+  utterance.onerror = () => {
+    ttsControls?.classList.remove("show");
+    updateTtsStatus("Leitura: erro");
+    currentUtterance = null;
+  };
+
+  window.speechSynthesis.cancel();
+  currentUtterance = utterance;
+  window.speechSynthesis.speak(utterance);
+}
+
+function togglePauseSpeech() {
+  if (!window.speechSynthesis) return;
+  if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+    window.speechSynthesis.pause();
+    if (ttsPauseResumeBtn) ttsPauseResumeBtn.textContent = "Retomar";
+    updateTtsStatus("Leitura: pausada");
+  } else if (window.speechSynthesis.paused) {
+    window.speechSynthesis.resume();
+    if (ttsPauseResumeBtn) ttsPauseResumeBtn.textContent = "Pausar";
+    updateTtsStatus("Lendo...");
+  }
+}
+
+function setImageAiMode(enabled) {
+  imageAiMode = Boolean(enabled);
+  if (imageAiModeBtn) {
+    imageAiModeBtn.textContent = imageAiMode ? "Imagem IA: ON" : "Imagem IA";
+  }
+  if (!imageAiMode && imageSelectionBox) {
+    imageSelectionBox.classList.remove("show");
+  }
+}
+
+function getPointerPositionInCanvas(event) {
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  return { x, y, rect };
+}
+
+function cropCanvasAreaToDataUrl(x1, y1, x2, y2) {
+  const sx = Math.max(0, Math.min(x1, x2));
+  const sy = Math.max(0, Math.min(y1, y2));
+  const ex = Math.min(canvas.width, Math.max(x1, x2));
+  const ey = Math.min(canvas.height, Math.max(y1, y2));
+  const width = Math.max(0, ex - sx);
+  const height = Math.max(0, ey - sy);
+  if (width < 12 || height < 12) return "";
+
+  const tmpCanvas = document.createElement("canvas");
+  tmpCanvas.width = width;
+  tmpCanvas.height = height;
+  const tmpCtx = tmpCanvas.getContext("2d");
+  tmpCtx.drawImage(canvas, sx, sy, width, height, 0, 0, width, height);
+  return tmpCanvas.toDataURL("image/png");
+}
+
+async function askAi(question, opts = {}) {
+  const payload = {
+    question,
+    selectionText: opts.selectionText || selectedText,
+    imageDataUrl: opts.imageDataUrl || selectedImageDataUrl,
+    page: pageNum,
+  };
+  showAiResponse("Pensando...");
+  try {
+    const res = await fetch(`/api/book/${bookId}/ask-ai`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "Falha ao consultar IA.");
+    }
+    showAiResponse(data.answer || "Sem resposta.");
+  } catch (err) {
+    showAiResponse(`Erro: ${err.message}`);
+  }
+}
+
 function updatePageInfo() {
   pageInfo.textContent = `Pagina ${pageNum} / ${pdfDoc.numPages}`;
   bookmarkBtn.textContent = bookmarkSet.has(pageNum) ? "Remover marcador" : "Marcar pagina";
@@ -201,6 +406,8 @@ function updatePageInfo() {
 
 async function renderPage(num) {
   rendering = true;
+  selectedImageDataUrl = "";
+  imageSelectionBox.classList.remove("show");
   const page = await pdfDoc.getPage(num);
   const baseViewport = page.getViewport({ scale: 1 });
 
@@ -293,6 +500,59 @@ async function saveHighlight() {
   }
 }
 
+function handleTextSelection(event) {
+  if (imageAiMode) return;
+  const selection = window.getSelection();
+  const text = (selection?.toString() || "").trim();
+  if (!text) {
+    selectedText = "";
+    hideAiMenu();
+    return;
+  }
+  selectedText = text;
+  selectedImageDataUrl = "";
+  showAiMenu(event.clientX + 10, event.clientY + 10);
+}
+
+function startImageSelection(event) {
+  if (!imageAiMode || rendering) return;
+  if (event.target !== canvas && event.target !== imageSelectionBox) return;
+  const p = getPointerPositionInCanvas(event);
+  imageDragStart = { x: p.x, y: p.y };
+  imageSelectionBox.style.left = `${p.x}px`;
+  imageSelectionBox.style.top = `${p.y}px`;
+  imageSelectionBox.style.width = "0px";
+  imageSelectionBox.style.height = "0px";
+  imageSelectionBox.classList.add("show");
+  hideAiMenu();
+}
+
+function moveImageSelection(event) {
+  if (!imageDragStart || !imageAiMode) return;
+  const p = getPointerPositionInCanvas(event);
+  const left = Math.min(imageDragStart.x, p.x);
+  const top = Math.min(imageDragStart.y, p.y);
+  const width = Math.abs(imageDragStart.x - p.x);
+  const height = Math.abs(imageDragStart.y - p.y);
+  imageSelectionBox.style.left = `${left}px`;
+  imageSelectionBox.style.top = `${top}px`;
+  imageSelectionBox.style.width = `${width}px`;
+  imageSelectionBox.style.height = `${height}px`;
+}
+
+function endImageSelection(event) {
+  if (!imageDragStart || !imageAiMode) return;
+  const p = getPointerPositionInCanvas(event);
+  selectedImageDataUrl = cropCanvasAreaToDataUrl(imageDragStart.x, imageDragStart.y, p.x, p.y);
+  imageDragStart = null;
+  if (selectedImageDataUrl) {
+    selectedText = "";
+    showAiMenu(event.clientX + 10, event.clientY + 10);
+  } else {
+    imageSelectionBox.classList.remove("show");
+  }
+}
+
 async function toggleFullscreen() {
   try {
     if (isFullscreenMode()) {
@@ -316,6 +576,41 @@ zoomOutBtn?.addEventListener("click", () => setZoom(zoomLevel - 0.1));
 zoomInBtn?.addEventListener("click", () => setZoom(zoomLevel + 0.1));
 zoomResetBtn?.addEventListener("click", () => setZoom(1));
 fullscreenBtn?.addEventListener("click", toggleFullscreen);
+imageAiModeBtn?.addEventListener("click", () => setImageAiMode(!imageAiMode));
+aiAskBtn?.addEventListener("click", async () => {
+  hideAiMenu();
+  const prompt = window.prompt("O que voce quer perguntar para a IA?");
+  if (!prompt) return;
+  await askAi(prompt);
+});
+aiTranslateBtn?.addEventListener("click", async () => {
+  hideAiMenu();
+  const base = selectedImageDataUrl
+    ? "Descreva e traduza para portugues o conteudo da imagem selecionada."
+    : "Traduza para portugues do Brasil o trecho selecionado.";
+  await askAi(base);
+});
+aiSpeakBtn?.addEventListener("click", () => {
+  hideAiMenu();
+  speakSelectedText();
+});
+aiCloseResponseBtn?.addEventListener("click", () => {
+  aiResponseBox?.classList.remove("show");
+});
+ttsPauseResumeBtn?.addEventListener("click", togglePauseSpeech);
+ttsStopBtn?.addEventListener("click", stopSpeech);
+
+textLayerDiv?.addEventListener("mouseup", handleTextSelection);
+document.addEventListener("mousedown", (e) => {
+  if (!aiSelectionMenu?.contains(e.target)) {
+    hideAiMenu();
+  }
+});
+
+canvas.addEventListener("mousedown", startImageSelection);
+canvas.addEventListener("mousemove", moveImageSelection);
+canvas.addEventListener("mouseup", endImageSelection);
+canvas.addEventListener("mouseleave", endImageSelection);
 
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && (e.key === "+" || e.key === "=")) {
@@ -381,6 +676,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     scheduleProgressSave(true);
     sendProgressBeacon();
+    stopSpeech();
   }
 });
 

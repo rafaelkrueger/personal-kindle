@@ -12,6 +12,7 @@
     <span id="zoomInfo">100%</span>
     <button id="zoomInBtn" class="btn ghost" title="Aumentar zoom">A+</button>
     <button id="zoomResetBtn" class="btn ghost" title="Resetar zoom">100%</button>
+    <button id="imageAiModeBtn" class="btn ghost" title="Selecionar imagem para IA">Imagem IA</button>
     <button id="fullscreenBtn" class="btn ghost" title="Tela cheia">Tela cheia</button>
     <button id="bookmarkBtn" class="btn">Marcar pagina</button>
     <button id="toggleSidePanel" class="btn ghost icon-btn" type="button" aria-label="Ocultar painel" title="Ocultar painel">
@@ -24,6 +25,7 @@
     <div id="pdfWrapper">
       <canvas id="pdfCanvas"></canvas>
       <div id="textLayer" class="textLayer"></div>
+      <div id="imageSelectionBox"></div>
     </div>
     <div class="highlight-actions">
       <button id="highlightBtn" class="btn">Grifar selecao</button>
@@ -59,6 +61,26 @@
     </details>
   </aside>
 </section>
+
+<div id="aiSelectionMenu" class="ai-menu" role="dialog" aria-hidden="true">
+  <button id="aiAskBtn" type="button">Perguntar IA</button>
+  <button id="aiTranslateBtn" type="button">Traduzir</button>
+  <button id="aiSpeakBtn" type="button">Ler em voz alta</button>
+</div>
+
+<div id="aiResponseBox" class="ai-response" aria-live="polite">
+  <div class="ai-response-header">
+    <strong>Assistente IA</strong>
+    <button id="aiCloseResponseBtn" type="button">x</button>
+  </div>
+  <div id="aiResponseContent"></div>
+</div>
+
+<div id="ttsControls" class="tts-controls" aria-live="polite">
+  <span id="ttsStatus">Leitura: pronta</span>
+  <button id="ttsPauseResumeBtn" type="button">Pausar</button>
+  <button id="ttsStopBtn" type="button">Parar</button>
+</div>
 
 <script id="readerConfig" type="application/json">{{ {
   "bookId": book["id"],

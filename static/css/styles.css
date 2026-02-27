@@ -436,6 +436,19 @@ body.is-reader-fullscreen .pdf-card {
   background: #ffffff;
 }
 
+#imageSelectionBox {
+  position: absolute;
+  border: 2px dashed #5cc8ff;
+  background: rgba(92, 200, 255, 0.12);
+  pointer-events: none;
+  display: none;
+  z-index: 6;
+}
+
+#imageSelectionBox.show {
+  display: block;
+}
+
 #pdfCanvas {
   display: block;
   max-width: 100%;
@@ -691,6 +704,95 @@ body.is-reader-fullscreen .pdf-card {
 .toast.show {
   opacity: 1;
   transform: translateY(0);
+}
+
+.ai-menu {
+  position: fixed;
+  z-index: 1000;
+  display: none;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(20, 25, 42, 0.96);
+  border: 1px solid rgba(121, 143, 255, 0.5);
+}
+
+.ai-menu.show {
+  display: inline-flex;
+}
+
+.ai-menu button {
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  background: #2a335f;
+}
+
+.ai-response {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  width: min(420px, 92vw);
+  max-height: 45vh;
+  overflow: auto;
+  z-index: 1000;
+  display: none;
+  border-radius: 12px;
+  background: rgba(15, 20, 36, 0.96);
+  border: 1px solid rgba(140, 160, 255, 0.35);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.35);
+}
+
+.ai-response.show {
+  display: block;
+}
+
+.ai-response-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ai-response-header button {
+  background: #2a335f;
+  padding: 6px 9px;
+}
+
+#aiResponseContent {
+  padding: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.tts-controls {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(16, 22, 40, 0.96);
+  border: 1px solid rgba(140, 160, 255, 0.35);
+}
+
+.tts-controls.show {
+  display: inline-flex;
+}
+
+.tts-controls span {
+  color: #dbe3ff;
+  font-size: 0.85rem;
+  max-width: 220px;
+}
+
+.tts-controls button {
+  padding: 7px 10px;
+  font-size: 0.8rem;
+  background: #2a335f;
 }
 
 @media (max-width: 940px) {
