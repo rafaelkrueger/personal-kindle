@@ -1,4 +1,4 @@
-# MiniKindle
+# Mini Kindle
 
 Leitor web de PDF leve e bonito, com:
 - biblioteca de livros (upload de PDF)
