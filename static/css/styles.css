@@ -123,6 +123,36 @@ body {
   backdrop-filter: blur(6px);
 }
 
+/* Modo leve para Raspberry Pi no leitor */
+.pi-lite .card {
+  backdrop-filter: none;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
+}
+
+.pi-lite .reader-layout *,
+.pi-lite .reader-topbar *,
+.pi-lite .side-panel * {
+  animation: none !important;
+  transition: none !important;
+}
+
+.pi-lite .btn:hover,
+.pi-lite button:hover {
+  transform: none;
+  filter: none;
+}
+
+.pi-lite #pdfWrapper {
+  perspective: none;
+  will-change: auto;
+  box-shadow: none;
+}
+
+.pi-lite .flip-canvas,
+.pi-lite .flip-shadow {
+  display: none !important;
+}
+
 .uploader {
   margin: 20px 0;
   padding: 16px;

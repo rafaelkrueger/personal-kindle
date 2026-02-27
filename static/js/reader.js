@@ -1,12 +1,7 @@
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.mjs";
 
 const readerConfig = JSON.parse(document.getElementById("readerConfig")?.textContent || "{}");
-const {
-  bookId,
-  pdfUrl,
-  initialPage,
-  initialBookmarks,
-} = readerConfig;
+const { bookId, pdfUrl, initialPage, initialBookmarks } = readerConfig;
 
 const canvas = document.getElementById("pdfCanvas");
 const ctx = canvas.getContext("2d");
@@ -34,27 +29,21 @@ const highlightsCount = document.getElementById("highlightsCount");
 const highlightColor = document.getElementById("highlightColor");
 const sidePanel = document.querySelector(".side-panel");
 
+const progressKey = `mk_progress_${bookId}`;
+const localSavedPage = Number.parseInt(localStorage.getItem(progressKey) || "0", 10) || 0;
+
 let pdfDoc = null;
-let pageNum = initialPage || 1;
+let pageNum = Math.max(initialPage || 1, localSavedPage || 1);
 let rendering = false;
 let pagePending = null;
 let bookmarkSet = new Set(initialBookmarks || []);
-let animating = false;
 let resizeTimer = null;
+let progressTimer = null;
+let progressInFlight = false;
+let progressPending = false;
 let zoomLevel = Number.parseFloat(localStorage.getItem("mk_zoom_level") || "1") || 1;
 let sidePanelCollapsed = localStorage.getItem("mk_sidepanel_collapsed") === "true";
 let sidePanelBeforeFullscreen = sidePanelCollapsed;
-
-const flipCanvas = document.createElement("canvas");
-flipCanvas.id = "flipCanvas";
-flipCanvas.className = "flip-canvas";
-const flipCtx = flipCanvas.getContext("2d");
-
-const flipShadow = document.createElement("div");
-flipShadow.className = "flip-shadow";
-
-pdfWrapper.appendChild(flipCanvas);
-pdfWrapper.appendChild(flipShadow);
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.mjs";
@@ -84,7 +73,7 @@ function setZoom(newZoom) {
   zoomLevel = clampZoom(newZoom);
   localStorage.setItem("mk_zoom_level", String(zoomLevel));
   updateZoomInfo();
-  if (pdfDoc && !rendering && !animating) {
+  if (pdfDoc && !rendering) {
     renderPage(pageNum);
   }
 }
@@ -148,18 +137,61 @@ function renderBookmarkList() {
       btn.className = "chip";
       btn.dataset.page = String(p);
       btn.textContent = `Pagina ${p}`;
-      btn.addEventListener("click", () => queueRenderPage(p, p < pageNum ? "prev" : "next"));
+      btn.addEventListener("click", () => queueRenderPage(p));
       bookmarksWrap.appendChild(btn);
     });
   setSectionState(bookmarksSection, bookmarksCount, bookmarkSet.size);
 }
 
-async function saveProgress() {
-  await fetch(`/api/book/${bookId}/progress`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ page: pageNum, totalPages: pdfDoc.numPages }),
-  });
+function saveProgressLocal() {
+  localStorage.setItem(progressKey, String(pageNum));
+}
+
+function buildProgressPayload() {
+  return { page: pageNum, totalPages: pdfDoc?.numPages || 0 };
+}
+
+async function flushProgressToServer() {
+  if (!pdfDoc || progressInFlight) {
+    progressPending = true;
+    return;
+  }
+  progressInFlight = true;
+  progressPending = false;
+  try {
+    await fetch(`/api/book/${bookId}/progress`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildProgressPayload()),
+      keepalive: true,
+    });
+  } catch (_) {
+    // Mantem progresso local e tenta novamente no proximo ciclo.
+  } finally {
+    progressInFlight = false;
+    if (progressPending) {
+      flushProgressToServer();
+    }
+  }
+}
+
+function scheduleProgressSave(immediate = false) {
+  saveProgressLocal();
+  clearTimeout(progressTimer);
+  if (immediate) {
+    flushProgressToServer();
+    return;
+  }
+  progressTimer = setTimeout(() => {
+    flushProgressToServer();
+  }, 250);
+}
+
+function sendProgressBeacon() {
+  if (!pdfDoc || !navigator.sendBeacon) return;
+  const payload = JSON.stringify(buildProgressPayload());
+  const body = new Blob([payload], { type: "application/json" });
+  navigator.sendBeacon(`/api/book/${bookId}/progress`, body);
 }
 
 function updatePageInfo() {
@@ -172,10 +204,9 @@ async function renderPage(num) {
   const page = await pdfDoc.getPage(num);
   const baseViewport = page.getViewport({ scale: 1 });
 
-  // Exibe uma pagina por vez, em pe (retrato), ajustando ao card sem rolagem.
-  const maxWidth = Math.max(Math.min(pdfCard.clientWidth - 28, 920), 280);
+  const maxWidth = Math.max(Math.min(pdfCard.clientWidth - 22, 860), 280);
   const fullscreenHeightRatio = isFullscreenMode() ? 0.88 : 0.72;
-  const maxHeight = Math.max(Math.min(window.innerHeight * fullscreenHeightRatio, 1120), 360);
+  const maxHeight = Math.max(Math.min(window.innerHeight * fullscreenHeightRatio, 980), 360);
   const fitScale = Math.max(Math.min(maxWidth / baseViewport.width, maxHeight / baseViewport.height), 0.45);
   const scale = fitScale * zoomLevel;
   const viewport = page.getViewport({ scale });
@@ -199,49 +230,22 @@ async function renderPage(num) {
   rendering = false;
   pageNum = num;
   updatePageInfo();
-  saveProgress();
+  scheduleProgressSave();
+
+  if (pagePending !== null) {
+    const pending = pagePending;
+    pagePending = null;
+    renderPage(pending);
+  }
 }
 
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function animatePageTurn(direction) {
-  if (animating) return;
-  if (canvas.width === 0 || canvas.height === 0) return;
-  animating = true;
-
-  flipCanvas.width = canvas.width;
-  flipCanvas.height = canvas.height;
-  flipCtx.clearRect(0, 0, flipCanvas.width, flipCanvas.height);
-  flipCtx.drawImage(canvas, 0, 0);
-
-  pdfWrapper.classList.remove("flip-next", "flip-prev");
-  pdfWrapper.classList.add("is-turning", direction === "prev" ? "flip-prev" : "flip-next");
-  await wait(40);
-}
-
-function finishPageTurnAnimation() {
-  pdfWrapper.classList.remove("is-turning", "flip-next", "flip-prev");
-  animating = false;
-}
-
-async function queueRenderPage(num, direction = "next") {
+function queueRenderPage(num) {
   if (num < 1 || !pdfDoc || num > pdfDoc.numPages) return;
-  if (rendering || animating) {
-    pagePending = { num, direction };
+  if (rendering) {
+    pagePending = num;
     return;
   }
-  await animatePageTurn(direction);
-  await wait(170);
-  await renderPage(num);
-  await wait(240);
-  finishPageTurnAnimation();
-  if (pagePending !== null) {
-    const pending = { ...pagePending };
-    pagePending = null;
-    queueRenderPage(pending.num, pending.direction);
-  }
+  renderPage(num);
 }
 
 async function toggleBookmark() {
@@ -298,13 +302,13 @@ async function toggleFullscreen() {
     sidePanelBeforeFullscreen = sidePanelCollapsed;
     setSidePanelCollapsed(true);
     await document.documentElement.requestFullscreen();
-  } catch (err) {
+  } catch (_) {
     // Silencioso para evitar bloquear leitura em navegadores restritivos.
   }
 }
 
-nextBtn.addEventListener("click", () => queueRenderPage(pageNum + 1, "next"));
-prevBtn.addEventListener("click", () => queueRenderPage(pageNum - 1, "prev"));
+nextBtn.addEventListener("click", () => queueRenderPage(pageNum + 1));
+prevBtn.addEventListener("click", () => queueRenderPage(pageNum - 1));
 bookmarkBtn.addEventListener("click", toggleBookmark);
 highlightBtn.addEventListener("click", saveHighlight);
 toggleSidePanelBtn?.addEventListener("click", () => setSidePanelCollapsed(!sidePanelCollapsed));
@@ -344,8 +348,8 @@ document.addEventListener("keydown", (e) => {
     setZoom(zoomLevel - 0.1);
     return;
   }
-  if (e.key === "ArrowLeft") queueRenderPage(pageNum - 1, "prev");
-  if (e.key === "ArrowRight") queueRenderPage(pageNum + 1, "next");
+  if (e.key === "ArrowLeft") queueRenderPage(pageNum - 1);
+  if (e.key === "ArrowRight") queueRenderPage(pageNum + 1);
 });
 
 document.addEventListener("fullscreenchange", () => {
@@ -357,6 +361,7 @@ document.addEventListener("fullscreenchange", () => {
   if (pdfDoc && !rendering) {
     renderPage(pageNum);
   }
+  scheduleProgressSave(true);
 });
 
 window.addEventListener("resize", () => {
@@ -367,14 +372,35 @@ window.addEventListener("resize", () => {
   }, 150);
 });
 
-pdfjsLib.getDocument(pdfUrl).promise.then((pdf) => {
-  pdfDoc = pdf;
-  zoomLevel = clampZoom(zoomLevel);
-  updateZoomInfo();
-  updateFullscreenUi();
-  setSidePanelCollapsed(sidePanelCollapsed);
-  initPanelSections();
-  hydrateHighlightColors();
-  renderBookmarkList();
-  renderPage(pageNum);
+window.addEventListener("pagehide", () => {
+  scheduleProgressSave(true);
+  sendProgressBeacon();
 });
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    scheduleProgressSave(true);
+    sendProgressBeacon();
+  }
+});
+
+document.body.classList.add("pi-lite");
+
+pdfjsLib
+  .getDocument({
+    url: pdfUrl,
+    disableAutoFetch: true,
+    disableStream: true,
+    isEvalSupported: false,
+  })
+  .promise.then((pdf) => {
+    pdfDoc = pdf;
+    zoomLevel = clampZoom(zoomLevel);
+    updateZoomInfo();
+    updateFullscreenUi();
+    setSidePanelCollapsed(sidePanelCollapsed);
+    initPanelSections();
+    hydrateHighlightColors();
+    renderBookmarkList();
+    renderPage(pageNum);
+  });

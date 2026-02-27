@@ -129,8 +129,8 @@ def create_app() -> Flask:
     @app.route("/api/book/<int:book_id>/progress", methods=["POST"])
     def save_progress(book_id: int):
         data = request.get_json(silent=True) or {}
-        page = int(data.get("page", 1))
-        total_pages = int(data.get("totalPages", 0))
+        page = safe_int(data.get("page"), 1)
+        total_pages = safe_int(data.get("totalPages"), 0)
         page = max(1, page)
 
         execute(
@@ -215,6 +215,13 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def safe_int(value: object, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def init_db() -> None:
     with get_conn() as conn:
         conn.executescript(
@@ -256,4 +263,5 @@ app = create_app()
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "5000"))
-    app.run(host=host, port=port, debug=True)
+    debug = os.getenv("DEBUG", "0").lower() in {"1", "true", "yes"}
+    app.run(host=host, port=port, debug=debug)
