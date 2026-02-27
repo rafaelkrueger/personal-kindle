@@ -19,7 +19,7 @@ jobs:
           host: ${{ secrets.PI_HOST }}
           username: ${{ secrets.PI_USER }}
           key: ${{ secrets.PI_SSH_KEY }}
-          port: '22'
+          port: ${{ secrets.PI_PORT || '22' }}
           script_stop: true
           envs: PI_APP_DIR,PI_SERVICE_NAME
           script: |
