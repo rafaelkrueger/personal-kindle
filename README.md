@@ -36,6 +36,25 @@ Abra no navegador:
 - no proprio Raspberry: `http://localhost:5000`
 - em outro dispositivo da rede: `http://IP_DO_RASPBERRY:5000`
 
+## Modo desktop (sem browser, recomendado para Raspberry Pi)
+
+Este modo roda como aplicacao nativa e evita o custo do navegador.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 desktop_app.py
+```
+
+### O que o modo desktop ja faz
+
+- biblioteca local de PDFs (importar/excluir)
+- abrir livro e navegar pagina a pagina
+- salvar progresso da ultima pagina automaticamente
+- marcar/desmarcar bookmarks por pagina
+- zoom de leitura (A- / A+ / 100%)
+
 ## Primeiro uso
 
 1. Acesse a tela inicial.
